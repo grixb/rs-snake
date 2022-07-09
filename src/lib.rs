@@ -22,14 +22,14 @@ impl Direction {
     }
 }
 
-pub trait Segment {
+pub type Seg = (Direction, usize);
+
+pub trait Segment: From<Seg> {
     fn dir(&self) -> Direction;
     fn len(&self) -> usize;
 }
 
-pub type Seg = (Direction, usize);
-
-impl Segment for (Direction, usize) {
+impl Segment for Seg {
     #[inline]
     fn dir(&self) -> Direction {
         self.0
@@ -41,18 +41,15 @@ impl Segment for (Direction, usize) {
     }
 }
 
-pub trait SegmentIter<'a, S: Segment + 'a>: Iterator<Item = &'a S> {}
-impl<'a, T, S: Segment + 'a> SegmentIter<'a, S> for T where T: Iterator<Item = &'a S> {}
+// (x, y)
+pub type Pos = (isize, isize);
 
-pub trait Position {
+pub trait Position: From<Pos> {
     fn x(&self) -> isize;
     fn y(&self) -> isize;
 }
 
-// (x, y)
-pub type Pos = (isize, isize);
-
-impl Position for (isize, isize) {
+impl Position for Pos {
     #[inline]
     fn x(&self) -> isize {
         self.0
@@ -64,11 +61,11 @@ impl Position for (isize, isize) {
     }
 }
 
-trait NextPos<P: Position> {
+pub trait NextPos<P: Position> {
     fn next_pos(self, dir: Direction) -> P;
 }
-impl NextPos<(isize, isize)> for (isize, isize) {
-    fn next_pos(self, dir: Direction) -> (isize, isize) {
+impl NextPos<Pos> for Pos {
+    fn next_pos(self, dir: Direction) -> Pos {
         use Direction::*;
         let mut pos = self.clone();
         match dir {
@@ -91,7 +88,7 @@ pub struct PosIter<'a, I, S, P> {
 impl<'a, S, I, P> Iterator for PosIter<'a, I, S, P>
 where
     S: Segment + 'a,
-    I: SegmentIter<'a, S>,
+    I: Iterator<Item = &'a S>,
     P: Position + NextPos<P> + Copy,
 {
     type Item = P;
@@ -122,7 +119,7 @@ where
 impl<'a, S, I, P> PosIter<'a, I, S, P>
 where
     S: Segment + 'a,
-    I: SegmentIter<'a, S>,
+    I: Iterator<Item = &'a S>,
     P: Position,
 {
     pub fn new(seg_iter: I, start: P) -> PosIter<'a, I, S, P> {
@@ -137,19 +134,20 @@ where
 pub trait PosIterBuilder<'a, S, I, P>
 where
     S: Segment + 'a,
-    I: SegmentIter<'a, S>,
+    I: Iterator<Item = &'a S>,
     P: Position,
 {
     fn iter_from_start(self, pos: P) -> PosIter<'a, I, S, P>;
 }
 
-impl<'a, T, S, I> PosIterBuilder<'a, S, I, Pos> for T 
+impl<'a, T, S, I, P> PosIterBuilder<'a, S, I, P> for T 
 where 
     S: Segment + 'a,
-    I: SegmentIter<'a, S>,
+    I: Iterator<Item = &'a S>,
+    P: Position,
     T: IntoIterator<Item = &'a S, IntoIter = I>,
 {
-    fn iter_from_start(self, pos: Pos) -> PosIter<'a, I, S, Pos> {
+    fn iter_from_start(self, pos: P) -> PosIter<'a, I, S, P> {
         PosIter::new(self.into_iter(), pos)
     }
 }
@@ -204,13 +202,13 @@ mod pos_iter_test {
     }
 }
 
-// (col, row)
-pub type Cell = (u16, u16);
-
 pub trait Cellular: From<Cell> {
     fn col(&self) -> u16;
     fn row(&self) -> u16;
 }
+
+// (col, row)
+pub type Cell = (u16, u16);
 
 impl Cellular for Cell {
     #[inline]
@@ -261,13 +259,18 @@ where
     }
 }
 
-impl<'a, S, I> PosIter<'a, I, S, Pos>
+impl<'a, I, S, P> PosIter<'a, I, S, P>
 where
     S: Segment + 'a,
-    I: SegmentIter<'a, S>,
+    I: Iterator<Item = &'a S>,
+    P: Position + NextPos<P> + Copy
 {
-    pub fn within_bound(self, bnd: Cell) -> CellIter<PosIter<'a, I, S, Pos>, Cell> {
-        CellIter::new(self, bnd)
+    pub fn within_bound<A, C>(self, bnd: A) -> CellIter<PosIter<'a, I, S, P>, C>
+    where
+        C: Cellular,
+        A: Into<C>
+    {
+        CellIter::new(self, bnd.into())
     }
 } 
 
@@ -305,31 +308,45 @@ mod cell_iter_test {
     }
 }
 
-pub struct Snake {
-    head: Pos,
-    segs: VecDeque<Seg>
+pub trait IncDec {
+    fn inc(&mut self);
+    fn dec(&mut self);
 }
 
-impl Snake {
+impl IncDec for Seg {
+    #[inline] fn inc(&mut self) { self.1 += 1; }
+    #[inline] fn dec(&mut self) { self.1 -= 1; }
+}
 
-    pub fn new<P: Into<Pos>>(start: P, len: usize) -> Snake {
-        Self { head: start.into(), segs: VecDeque::from([(Direction::Up, len)]) }
+pub struct Snaker<P, S> {
+    head: P,
+    segs: VecDeque<S>
+}
+
+impl<P, S> Snaker<P, S>
+where
+    P: Position + NextPos<P> + Copy + PartialEq,
+    S: Segment + IncDec,
+{
+
+    pub fn new<A: Into<P>>(start: A, len: usize) -> Self {
+        Self { head: start.into(), segs: VecDeque::from([(Direction::Up, len).into()]) }
     }
 
     pub fn snaking(&mut self, new_dir: Option<Direction>) {
         if let (Some(new_dir), Some(top_seg)) = (new_dir, self.segs.front()) {
             if top_seg.dir() != new_dir && top_seg.dir() != new_dir.opposite() {
-                self.segs.push_front((new_dir, 0));
+                self.segs.push_front((new_dir, 0).into());
             }
         }
 
         if let Some(top_seg) = self.segs.front_mut() {
             self.head = self.head.next_pos(top_seg.dir());
-            top_seg.1 += 1;
+            top_seg.inc();
         }
         if let Some(mut lst_seg) = self.segs.pop_back() {
             if lst_seg.len() > 1 {
-                lst_seg.1 -= 1;
+                lst_seg.dec();
                 self.segs.push_back(lst_seg);
             } else {
                 drop(lst_seg);
@@ -345,25 +362,30 @@ impl Snake {
 
     pub fn grow(&mut self) {
         if let Some(lst_seg) = self.segs.back_mut() {
-            lst_seg.1 += 1;
+            lst_seg.inc();
         }
     }
 
-    pub fn formatter(&self, bound: Cell, elems: [char; 5]) -> SnakeFormatter<'_> {
-        SnakeFormatter { snk: self, bnd: bound, lms: elems }
+    pub fn formatter<C: Cellular>(&self, bound: C, elems: [char; 5]) -> SnakeFormatter<'_, P, S, C> {
+        SnakeFormatter { snk: self, bnd: bound.into(), lms: elems }
     }
 }
 
-pub struct SnakeFormatter<'a> { 
-    snk: &'a Snake,
-    bnd: Cell,
+pub struct SnakeFormatter<'a, P, S, C> { 
+    snk: &'a Snaker<P, S>,
+    bnd: C,
     lms: [char; 5]
 }
 
-impl<'a> Display for SnakeFormatter<'a> {
+impl<'a, P, S, C> Display for SnakeFormatter<'a, P, S, C>
+where
+    P: Position + NextPos<P> + Copy,
+    S: Segment + 'a,
+    C: Cellular + Into<Cell> + Copy,
+{
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let head_char = if let Some((head_dir, _)) = self.snk.segs.front() {
-            self.lms[*head_dir as usize]
+        let head_char = if let Some(head_dir) = self.snk.segs.front().map(Segment::dir) {
+            self.lms[head_dir as usize]
         } else {
             self.lms[4]
         };
@@ -372,7 +394,7 @@ impl<'a> Display for SnakeFormatter<'a> {
             .iter_from_start(self.snk.head)
             .within_bound(self.bnd);
 
-        if let Some(head_cell) = cell_itr.next() {
+        if let Some(head_cell) = cell_itr.next().map(Cell::from) {
             write!(f,"\x1b[{};{}H{}", head_cell.row(), head_cell.col(), head_char)?;
             for body_cell in cell_itr {
                 write!(f,"\x1b[{};{}H{}", body_cell.row(), body_cell.col(), self.lms[4])?;
@@ -385,34 +407,42 @@ impl<'a> Display for SnakeFormatter<'a> {
 }
 
 #[derive(Clone, Copy, PartialEq)]
-pub struct Food { 
-    pos: Cell,
-    bnd: Cell
+pub struct Food<C> { 
+    pos: C,
+    bnd: C
 }
 
-impl Food {
-    pub fn somewhere_within(bound: Cell) -> Self {
+impl<C: Cellular + Into<Cell> + Copy> Food<C> {
+    pub fn somewhere_within(bound: C) -> Self
+    {
         let mut rng = XorShiftRng::from_entropy();
         Self { 
             bnd: bound,
             pos: (
                 ((rng.next_u32() / 3 * 2 + 1)).rem_euclid(bound.col() as u32) as u16,
                 (rng.next_u32()).rem_euclid(bound.row() as u32) as u16,
-            ),
+            ).into(),
         }
     }
 
-    pub fn is_eaten_by(&self, snake: &Snake) -> bool {
+    pub fn is_eaten_by<P, S>(&self, snake: &Snaker<P, S>) -> bool
+    where
+        P: Position + NextPos<P> + Copy + PartialEq,
+        S: Segment + IncDec,
+    {
         snake.segs
         .iter_from_start(snake.head)
         .within_bound(self.bnd)
         .next()
-        .map_or(false, |head_cell| head_cell == self.pos)
+        .map(Cell::from)
+        .map_or(false, |head_cell| head_cell == self.pos.into())
     }    
 }
 
-impl Display for Food {
+impl<C: Cellular> Display for Food<C> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f,"\x1b[{};{}H@", self.pos.row(), self.pos.col())
     }
 }
+
+pub type Snake = Snaker<Pos, Seg>;

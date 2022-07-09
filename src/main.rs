@@ -10,7 +10,7 @@ use std::{
     time::Duration,
 };
 
-use rs_snake::{Snake, Food};
+use snake::{Snake, Food};
 
 pub const DEFAULT_PARTS: [char; 5] = ['⮝', '⮟', '⮜', '➤', '*'];
 
@@ -71,7 +71,7 @@ fn game_loop() -> io::Result<Screen> {
         stdout().flush()?;        
 
         snake.snaking(if event::poll(Duration::from_millis(250))? {
-            use rs_snake::Direction::*;
+            use snake::Direction::*;
 
             match event::read()? {
                 Event::Key(key) if key.code == KeyCode::Esc || key.code == KeyCode::Char('q') => {
