@@ -56,7 +56,6 @@ fn splash() -> io::Result<Screen> {
 fn game_loop() -> io::Result<Screen> {
     let term_size = terminal::size()?;
     let mut snake = Snake::new((0,0), 10);
-
     let mut food = Food::somewhere_within(term_size);
 
     loop {
@@ -92,7 +91,7 @@ fn game_loop() -> io::Result<Screen> {
         }
         if food.is_eaten_by(&snake) {
             snake.grow();
-            food = Food::somewhere_within(term_size)
+            food.next_place();
         }
 
     }

@@ -265,12 +265,8 @@ where
     I: Iterator<Item = &'a S>,
     P: Position + NextPos<P> + Copy
 {
-    pub fn within_bound<A, C>(self, bnd: A) -> CellIter<PosIter<'a, I, S, P>, C>
-    where
-        C: Cellular,
-        A: Into<C>
-    {
-        CellIter::new(self, bnd.into())
+    pub fn within_bound<C: Cellular>(self, bnd: C) -> CellIter<PosIter<'a, I, S, P>, C> {
+        CellIter::new(self, bnd)
     }
 } 
 
@@ -381,7 +377,7 @@ impl<'a, P, S, C> Display for SnakeFormatter<'a, P, S, C>
 where
     P: Position + NextPos<P> + Copy,
     S: Segment + 'a,
-    C: Cellular + Into<Cell> + Copy,
+    C: Cellular + Copy,
 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let head_char = if let Some(head_dir) = self.snk.segs.front().map(Segment::dir) {
@@ -394,7 +390,7 @@ where
             .iter_from_start(self.snk.head)
             .within_bound(self.bnd);
 
-        if let Some(head_cell) = cell_itr.next().map(Cell::from) {
+        if let Some(head_cell) = cell_itr.next() {
             write!(f,"\x1b[{};{}H{}", head_cell.row(), head_cell.col(), head_char)?;
             for body_cell in cell_itr {
                 write!(f,"\x1b[{};{}H{}", body_cell.row(), body_cell.col(), self.lms[4])?;
@@ -406,22 +402,27 @@ where
     }
 }
 
-#[derive(Clone, Copy, PartialEq)]
 pub struct Food<C> { 
     pos: C,
-    bnd: C
+    bnd: C,
+    rng: XorShiftRng
 }
 
-impl<C: Cellular + Into<Cell> + Copy> Food<C> {
+impl<C: Cellular + PartialEq + Copy> Food<C> {
+    fn nxt_pos(rng: &mut XorShiftRng, bound: &C) -> C {
+        (
+            ((rng.gen::<u16>() / 3 * 2 + 1)).rem_euclid(bound.col()),
+            (rng.gen::<u16>()).rem_euclid(bound.row()),
+        ).into()
+    }
+
     pub fn somewhere_within(bound: C) -> Self
     {
         let mut rng = XorShiftRng::from_entropy();
         Self { 
             bnd: bound,
-            pos: (
-                ((rng.next_u32() / 3 * 2 + 1)).rem_euclid(bound.col() as u32) as u16,
-                (rng.next_u32()).rem_euclid(bound.row() as u32) as u16,
-            ).into(),
+            pos: Self::nxt_pos(&mut rng, &bound),
+            rng: rng
         }
     }
 
@@ -434,9 +435,12 @@ impl<C: Cellular + Into<Cell> + Copy> Food<C> {
         .iter_from_start(snake.head)
         .within_bound(self.bnd)
         .next()
-        .map(Cell::from)
-        .map_or(false, |head_cell| head_cell == self.pos.into())
-    }    
+        .map_or(false, |head_cell| head_cell == self.pos)
+    }
+
+    pub fn next_place(&mut self) {
+        self.pos = Self::nxt_pos(&mut self.rng, &self.bnd)
+    }
 }
 
 impl<C: Cellular> Display for Food<C> {
