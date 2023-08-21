@@ -410,8 +410,10 @@ pub struct Food<C> {
 
 impl<C: Cellular + PartialEq + Copy> Food<C> {
     fn nxt_pos(rng: &mut XorShiftRng, bound: &C) -> C {
+        let x = rng.gen::<u16>() / 3 * 2;
+        let x = if x.rem_euclid(2) == 0 { x } else { x + 1 };
         (
-            ((rng.gen::<u16>() / 3 * 2 + 1)).rem_euclid(bound.col()),
+            x.rem_euclid(bound.col()),
             (rng.gen::<u16>()).rem_euclid(bound.row()),
         ).into()
     }
